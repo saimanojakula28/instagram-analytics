@@ -17,55 +17,59 @@ st.markdown(
 
 st.title("📊 Instagram Performance Dashboard")
 
-# ✅ IMPORTANT: Paste your GitHub RAW CSV URL here
-RAW_CSV_URL = "https://raw.githubusercontent.com/saimanojakula28/instagram-analytics/main/data/instagram_data.csv"
-
+# ---------------- Load Data (works on Cloud) ----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOCAL_PATH = os.path.join(BASE_DIR, "data", "instagram_data.csv")
 
-def load_dataset():
-    # 1) Try local file (works locally + if Streamlit actually has it)
-    if os.path.exists(LOCAL_PATH):
-        return pd.read_csv(LOCAL_PATH, encoding="latin1")
+st.sidebar.header("📂 Data Source")
 
-    # 2) Try GitHub RAW (works even if Streamlit container doesn't have the file)
+use_uploaded = st.sidebar.checkbox("Use uploaded CSV (recommended for Cloud)", value=True)
+
+@st.cache_data(show_spinner=False)
+def read_csv_safely(file_or_path):
+    # pandas encoding fallback
     try:
-        return pd.read_csv(RAW_CSV_URL, encoding="latin1")
-    except Exception as e:
-        st.error("❌ Could not load dataset from local file OR GitHub RAW URL.")
-        st.write("Local path tried:", LOCAL_PATH)
-        st.write("RAW URL tried:", RAW_CSV_URL)
-        st.exception(e)
+        return pd.read_csv(file_or_path, encoding="utf-8")
+    except Exception:
+        return pd.read_csv(file_or_path, encoding="latin1")
 
-    # 3) Final fallback: file upload
-    st.info("Upload your CSV below as a fallback.")
-    uploaded = st.file_uploader("Upload instagram_data.csv", type=["csv"])
+df = None
+
+if use_uploaded:
+    uploaded = st.sidebar.file_uploader("Upload instagram_data.csv", type=["csv"])
     if uploaded is not None:
-        return pd.read_csv(uploaded, encoding="latin1")
+        df = read_csv_safely(uploaded)
+    else:
+        st.warning("Upload your CSV to continue (left sidebar).")
+        st.stop()
+else:
+    if os.path.exists(LOCAL_PATH):
+        df = read_csv_safely(LOCAL_PATH)
+    else:
+        st.error("❌ Local dataset not found at: data/instagram_data.csv")
+        st.info("Either upload the CSV from the sidebar, or add it to your GitHub repo inside `data/` folder.")
+        st.stop()
 
-    st.stop()
-
-df = load_dataset()
-
-# Standardize column names
+# ---------------- Clean columns ----------------
 df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
 
-# ---- Helper: ensure numeric column exists ----
+with st.expander("🧾 Detected columns"):
+    st.write(df.columns.tolist())
+
+# ---------------- Helpers ----------------
 def ensure_numeric(col_name, aliases=None):
     aliases = aliases or []
     if col_name in df.columns:
         df[col_name] = pd.to_numeric(df[col_name], errors="coerce").fillna(0)
         return
-
     for a in aliases:
         a2 = a.strip().lower().replace(" ", "_")
         if a2 in df.columns:
             df[col_name] = pd.to_numeric(df[a2], errors="coerce").fillna(0)
             return
-
     df[col_name] = 0
 
-# Map your metrics safely
+# Required metrics (based on your earlier columns)
 ensure_numeric("impressions", aliases=["impression", "views", "total_impressions"])
 ensure_numeric("from_home", aliases=["home"])
 ensure_numeric("from_hashtags", aliases=["hashtags"])
@@ -78,19 +82,20 @@ ensure_numeric("likes")
 ensure_numeric("profile_visits", aliases=["visits", "profile_visit"])
 ensure_numeric("follows", aliases=["followers"])
 
-# Feature engineering
+# ---------------- Feature engineering ----------------
 df["engagement"] = df["likes"] + df["comments"] + df["shares"] + df["saves"]
 df["engagement_rate"] = np.where(df["impressions"] > 0, (df["engagement"] / df["impressions"]) * 100, 0)
 
-# Sidebar filter
+# ---------------- Filters ----------------
 st.sidebar.header("🔎 Filters")
+
 min_imp = int(df["impressions"].min()) if len(df) else 0
 max_imp = int(df["impressions"].max()) if len(df) else 0
 
 min_impressions = st.sidebar.slider("Minimum Impressions", min_value=min_imp, max_value=max_imp, value=min_imp)
 df = df[df["impressions"] >= min_impressions].copy()
 
-# KPIs
+# ---------------- KPIs ----------------
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Total Posts", len(df))
 c2.metric("Total Impressions", int(df["impressions"].sum()))
@@ -99,7 +104,7 @@ c4.metric("Total Engagement", int(df["engagement"].sum()))
 
 st.divider()
 
-# Charts
+# ---------------- Charts ----------------
 st.subheader("📈 Engagement Rate Distribution")
 st.plotly_chart(px.histogram(df, x="engagement_rate", nbins=20), use_container_width=True)
 
@@ -120,4 +125,5 @@ if "caption" in df.columns:
 
 st.subheader("🏆 Top 10 Posts by Engagement Rate")
 top_posts = df.sort_values("engagement_rate", ascending=False).head(10)
-st.dataframe(top_posts[["impressions", "likes", "comments", "shares", "saves", "engagement_rate"]], use_container_width=True)
+show_cols = [c for c in ["impressions", "likes", "comments", "shares", "saves", "engagement_rate"] if c in top_posts.columns]
+st.dataframe(top_posts[show_cols], use_container_width=True)
