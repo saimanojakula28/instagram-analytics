@@ -4,7 +4,6 @@ import pandas as pd
 import plotly.express as px
 import numpy as np
 
-# ---------------- Page + Style ----------------
 st.set_page_config(page_title="Instagram Analytics", layout="wide")
 
 st.markdown(
@@ -18,26 +17,40 @@ st.markdown(
 
 st.title("📊 Instagram Performance Dashboard")
 
-# ---------------- Load Data (robust path) ----------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.join(BASE_DIR, "data", "instagram_data.csv")
+# ✅ IMPORTANT: Paste your GitHub RAW CSV URL here
+RAW_CSV_URL = "PASTE_YOUR_RAW_CSV_URL_HERE"
 
-if not os.path.exists(DATA_PATH):
-    st.error("❌ Dataset not found at: data/instagram_data.csv")
-    st.info(
-        "Fix:\n"
-        "1) Make sure your GitHub repo has a folder named `data`\n"
-        "2) Put `instagram_data.csv` inside it\n"
-        "3) Commit + push, then reboot the app on Streamlit Cloud"
-    )
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOCAL_PATH = os.path.join(BASE_DIR, "data", "instagram_data.csv")
+
+def load_dataset():
+    # 1) Try local file (works locally + if Streamlit actually has it)
+    if os.path.exists(LOCAL_PATH):
+        return pd.read_csv(LOCAL_PATH, encoding="latin1")
+
+    # 2) Try GitHub RAW (works even if Streamlit container doesn't have the file)
+    try:
+        return pd.read_csv(RAW_CSV_URL, encoding="latin1")
+    except Exception as e:
+        st.error("❌ Could not load dataset from local file OR GitHub RAW URL.")
+        st.write("Local path tried:", LOCAL_PATH)
+        st.write("RAW URL tried:", RAW_CSV_URL)
+        st.exception(e)
+
+    # 3) Final fallback: file upload
+    st.info("Upload your CSV below as a fallback.")
+    uploaded = st.file_uploader("Upload instagram_data.csv", type=["csv"])
+    if uploaded is not None:
+        return pd.read_csv(uploaded, encoding="latin1")
+
     st.stop()
 
-df = pd.read_csv(DATA_PATH, encoding="latin1")
+df = load_dataset()
 
 # Standardize column names
 df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
 
-# ---------------- Helper: ensure numeric columns exist ----------------
+# ---- Helper: ensure numeric column exists ----
 def ensure_numeric(col_name, aliases=None):
     aliases = aliases or []
     if col_name in df.columns:
@@ -52,7 +65,7 @@ def ensure_numeric(col_name, aliases=None):
 
     df[col_name] = 0
 
-# Map metrics safely
+# Map your metrics safely
 ensure_numeric("impressions", aliases=["impression", "views", "total_impressions"])
 ensure_numeric("from_home", aliases=["home"])
 ensure_numeric("from_hashtags", aliases=["hashtags"])
@@ -65,70 +78,46 @@ ensure_numeric("likes")
 ensure_numeric("profile_visits", aliases=["visits", "profile_visit"])
 ensure_numeric("follows", aliases=["followers"])
 
-# ---------------- Feature Engineering ----------------
+# Feature engineering
 df["engagement"] = df["likes"] + df["comments"] + df["shares"] + df["saves"]
-df["engagement_rate"] = np.where(
-    df["impressions"] > 0,
-    (df["engagement"] / df["impressions"]) * 100,
-    0
-)
+df["engagement_rate"] = np.where(df["impressions"] > 0, (df["engagement"] / df["impressions"]) * 100, 0)
 
-# ---------------- Sidebar Filters (apply BEFORE charts) ----------------
+# Sidebar filter
 st.sidebar.header("🔎 Filters")
-
-# Protect slider if impressions is empty
 min_imp = int(df["impressions"].min()) if len(df) else 0
 max_imp = int(df["impressions"].max()) if len(df) else 0
 
-min_impressions = st.sidebar.slider(
-    "Minimum Impressions",
-    min_value=min_imp,
-    max_value=max_imp,
-    value=min_imp
-)
+min_impressions = st.sidebar.slider("Minimum Impressions", min_value=min_imp, max_value=max_imp, value=min_imp)
+df = df[df["impressions"] >= min_impressions].copy()
 
-df_filtered = df[df["impressions"] >= min_impressions].copy()
-
-# ---------------- Debug (optional) ----------------
-with st.expander("🧾 Detected columns (click to view)"):
-    st.write(df.columns.tolist())
-
-# ---------------- KPIs ----------------
+# KPIs
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Total Posts", len(df_filtered))
-c2.metric("Total Impressions", int(df_filtered["impressions"].sum()))
-c3.metric("Avg Engagement Rate (%)", round(df_filtered["engagement_rate"].mean(), 2) if len(df_filtered) else 0)
-c4.metric("Total Engagement", int(df_filtered["engagement"].sum()))
+c1.metric("Total Posts", len(df))
+c2.metric("Total Impressions", int(df["impressions"].sum()))
+c3.metric("Avg Engagement Rate (%)", round(df["engagement_rate"].mean(), 2) if len(df) else 0)
+c4.metric("Total Engagement", int(df["engagement"].sum()))
 
 st.divider()
 
-# ---------------- Charts ----------------
+# Charts
 st.subheader("📈 Engagement Rate Distribution")
-fig1 = px.histogram(df_filtered, x="engagement_rate", nbins=20)
-st.plotly_chart(fig1, use_container_width=True)
+st.plotly_chart(px.histogram(df, x="engagement_rate", nbins=20), use_container_width=True)
 
 st.subheader("🧭 Where impressions came from")
-source_data = df_filtered[["from_home", "from_hashtags", "from_explore", "from_other"]].sum().reset_index()
+source_data = df[["from_home", "from_hashtags", "from_explore", "from_other"]].sum().reset_index()
 source_data.columns = ["Source", "Total"]
-fig2 = px.pie(source_data, names="Source", values="Total")
-st.plotly_chart(fig2, use_container_width=True)
+st.plotly_chart(px.pie(source_data, names="Source", values="Total"), use_container_width=True)
 
-# ---------------- Optional: hashtags + caption ----------------
-if "hashtags" in df_filtered.columns:
-    df_filtered["hashtag_count"] = df_filtered["hashtags"].fillna("").astype(str).apply(lambda x: x.count("#"))
+if "hashtags" in df.columns:
+    df["hashtag_count"] = df["hashtags"].fillna("").astype(str).apply(lambda x: x.count("#"))
     st.subheader("🔖 Hashtag Count vs Engagement Rate")
-    fig3 = px.scatter(df_filtered, x="hashtag_count", y="engagement_rate")
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(px.scatter(df, x="hashtag_count", y="engagement_rate"), use_container_width=True)
 
-if "caption" in df_filtered.columns:
-    df_filtered["caption_length"] = df_filtered["caption"].fillna("").astype(str).apply(len)
+if "caption" in df.columns:
+    df["caption_length"] = df["caption"].fillna("").astype(str).apply(len)
     st.subheader("✍️ Caption Length vs Engagement Rate")
-    fig4 = px.scatter(df_filtered, x="caption_length", y="engagement_rate")
-    st.plotly_chart(fig4, use_container_width=True)
+    st.plotly_chart(px.scatter(df, x="caption_length", y="engagement_rate"), use_container_width=True)
 
-# ---------------- Top 10 Table ----------------
 st.subheader("🏆 Top 10 Posts by Engagement Rate")
-top_posts = df_filtered.sort_values("engagement_rate", ascending=False).head(10)
-
-cols_to_show = [c for c in ["impressions", "likes", "comments", "shares", "saves", "engagement_rate"] if c in top_posts.columns]
-st.dataframe(top_posts[cols_to_show], use_container_width=True)
+top_posts = df.sort_values("engagement_rate", ascending=False).head(10)
+st.dataframe(top_posts[["impressions", "likes", "comments", "shares", "saves", "engagement_rate"]], use_container_width=True)
