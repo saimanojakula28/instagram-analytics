@@ -18,7 +18,7 @@ st.markdown(
 st.title("📊 Instagram Performance Dashboard")
 
 # ✅ IMPORTANT: Paste your GitHub RAW CSV URL here
-RAW_CSV_URL = "PASTE_YOUR_RAW_CSV_URL_HERE"
+RAW_CSV_URL = "https://raw.githubusercontent.com/saimanojakula28/instagram-analytics/main/data/instagram_data.csv"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOCAL_PATH = os.path.join(BASE_DIR, "data", "instagram_data.csv")
